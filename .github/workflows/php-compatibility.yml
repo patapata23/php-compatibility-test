@@ -6,7 +6,6 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '**.php'
-      - '!**.blade.php'
 
 permissions:
   contents: read
@@ -36,7 +35,7 @@ jobs:
       - name: Get changed PHP files
         id: changed-files
         run: |
-          changed_files=$(git diff --name-only origin/stable..HEAD | grep '\.php$' || true)
+          changed_files=$(git diff --name-only origin/stable..HEAD | grep '\.php$' | grep -v '\.blade\.php$' || true)
           if [ -z "$changed_files" ]; then
             echo "No PHP files changed in this PR"
             echo "has_php_files=false" >> $GITHUB_OUTPUT
