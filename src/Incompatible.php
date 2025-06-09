@@ -60,6 +60,7 @@ class Incompatible
  */
 class IndivContact
 {
+    // テスト
     private $listFilter = [];
 
     // Non-staticメソッド
