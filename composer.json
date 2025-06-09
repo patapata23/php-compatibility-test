@@ -1,0 +1,17 @@
+{
+    "name": "test/php-compatibility-test",
+    "description": "PHP Compatibility Test Repository",
+    "type": "project",
+    "require": {
+        "php": ">=7.3"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.7",
+        "phpcompatibility/php-compatibility": "^9.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "Test\\": "src/"
+        }
+    }
+}
