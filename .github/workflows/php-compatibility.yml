@@ -7,6 +7,11 @@ on:
     paths:
       - '**.php'
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   php-compatibility-check:
     runs-on: ubuntu-latest
@@ -47,15 +52,43 @@ jobs:
         run: |
           echo "Checking PHP 7.3-8.4 compatibility for changed files..."
           # 変更されたファイルのみをチェック
-          if ~/.composer/vendor/bin/phpcs \
+          compatibility_passed=true
+
+          # PHPCompatibility check
+          echo "=== Running PHPCompatibility check ==="
+          if ! ~/.composer/vendor/bin/phpcs \
             --standard=PHPCompatibility \
             --runtime-set testVersion 7.3-8.4 \
             --report=full \
             --file-list=changed_files.txt; then
-            echo "✅ All changed files are compatible with PHP 7.3-8.4"
-          else
+            echo "::error::PHPCompatibility issues found"
+            compatibility_passed=false
+          fi
+
+          # PHP syntax check with different versions
+          echo "=== Running PHP syntax validation ==="
+          while IFS= read -r file; do
+            echo "Checking syntax for: $file"
+
+            # PHP 7.3 syntax check
+            if ! php -l "$file" > /dev/null 2>&1; then
+              echo "::error::Syntax error in $file"
+              compatibility_passed=false
+            fi
+
+            # Static analysis for common issues
+            if grep -n "::.*(" "$file" | grep -v "self::" | grep -v "parent::" | grep -v "static::" | grep -v "class::" > /dev/null; then
+              echo "=== Potential static method calls found in $file ==="
+              grep -n "::.*(" "$file" | grep -v "self::" | grep -v "parent::" | grep -v "static::" | grep -v "class::"
+              echo "::warning::Potential static method calls detected. Please verify these are correct."
+            fi
+          done < changed_files.txt
+
+          if [ "$compatibility_passed" = false ]; then
             echo "::error::Compatibility issues found. Check the report above for details."
             exit 1
+          else
+            echo "✅ All changed files are compatible with PHP 7.3-8.4"
           fi
 
       - name: Comment PR on compatibility issues
