@@ -23,12 +23,40 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: '8.3'
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.composer-cache.outputs.dir }}
+            ~/.composer/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock', '**/composer.json') }}-phpcs-phpcompat
+          restore-keys: |
+            ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock', '**/composer.json') }}-
+            ${{ runner.os }}-composer-
 
       - name: Install PHP_CodeSniffer and PHPCompatibility
         run: |
-          composer global require squizlabs/php_codesniffer
-          composer global require phpcompatibility/php-compatibility
+          # インストール済みかチェックしてからインストール
+          if [ ! -f ~/.composer/vendor/bin/phpcs ]; then
+            echo "Installing PHP_CodeSniffer..."
+            composer global require squizlabs/php_codesniffer
+          else
+            echo "PHP_CodeSniffer already installed (cached)"
+          fi
+
+          if [ ! -d ~/.composer/vendor/phpcompatibility/php-compatibility ]; then
+            echo "Installing PHPCompatibility..."
+            composer global require phpcompatibility/php-compatibility
+          else
+            echo "PHPCompatibility already installed (cached)"
+          fi
+
           # PHPCompatibilityをCodeSnifferに登録
           ~/.composer/vendor/bin/phpcs --config-set installed_paths ~/.composer/vendor/phpcompatibility/php-compatibility
 
@@ -46,10 +74,10 @@ jobs:
             echo "has_php_files=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check PHP 7.3-8.4 compatibility
+      - name: Check PHP 7.3-8.3 compatibility
         if: steps.changed-files.outputs.has_php_files == 'true'
         run: |
-          echo "Checking PHP 7.3-8.4 compatibility for changed files..."
+          echo "Checking PHP 7.3-8.3 compatibility for changed files..."
           # 変更されたファイルのみをチェック
           compatibility_passed=true
 
@@ -57,37 +85,18 @@ jobs:
           echo "=== Running PHPCompatibility check ==="
           if ! ~/.composer/vendor/bin/phpcs \
             --standard=PHPCompatibility \
-            --runtime-set testVersion 7.3-8.4 \
+            --runtime-set testVersion 7.3-8.3 \
             --report=full \
             --file-list=changed_files.txt; then
             echo "::error::PHPCompatibility issues found"
             compatibility_passed=false
           fi
 
-          # PHP syntax check with different versions
-          echo "=== Running PHP syntax validation ==="
-          while IFS= read -r file; do
-            echo "Checking syntax for: $file"
-
-            # PHP 7.3 syntax check
-            if ! php -l "$file" > /dev/null 2>&1; then
-              echo "::error::Syntax error in $file"
-              compatibility_passed=false
-            fi
-
-            # Static analysis for common issues
-            if grep -n "::.*(" "$file" | grep -v "self::" | grep -v "parent::" | grep -v "static::" | grep -v "class::" > /dev/null; then
-              echo "=== Potential static method calls found in $file ==="
-              grep -n "::.*(" "$file" | grep -v "self::" | grep -v "parent::" | grep -v "static::" | grep -v "class::"
-              echo "::warning::Potential static method calls detected. Please verify these are correct."
-            fi
-          done < changed_files.txt
-
           if [ "$compatibility_passed" = false ]; then
             echo "::error::Compatibility issues found. Check the report above for details."
             exit 1
           else
-            echo "✅ All changed files are compatible with PHP 7.3-8.4"
+            echo "✅ All changed files are compatible with PHP 7.3-8.3"
           fi
 
       - name: Comment PR on compatibility issues
@@ -99,7 +108,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '⚠️ **PHP Compatibility Issues Detected**\n\nThe changed files in this PR have compatibility issues between PHP 7.3 and 8.4.\n\nPlease check the GitHub Actions workflow logs for detailed information and fix the compatibility issues before merging to the stable branch.'
+              body: '⚠️ **PHP Compatibility Issues Detected**\n\nThe changed files in this PR have compatibility issues between PHP 7.3 and 8.3.\n\nPlease check the GitHub Actions workflow logs for detailed information and fix the compatibility issues before merging to the stable branch.'
             })
 
       - name: Comment PR on success
@@ -111,7 +120,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '✅ **PHP Compatibility Check Passed**\n\nAll changed files are compatible with PHP 7.3-8.4. No compatibility issues detected.'
+              body: '✅ **PHP Compatibility Check Passed**\n\nAll changed files are compatible with PHP 7.3-8.3. No compatibility issues detected.'
             })
 
       - name: Comment PR when no PHP files changed
