@@ -42,8 +42,21 @@ jobs:
 
       - name: Install PHP_CodeSniffer and PHPCompatibility
         run: |
-          composer global require squizlabs/php_codesniffer
-          composer global require phpcompatibility/php-compatibility
+          # インストール済みかチェックしてからインストール
+          if [ ! -f ~/.composer/vendor/bin/phpcs ]; then
+            echo "Installing PHP_CodeSniffer..."
+            composer global require squizlabs/php_codesniffer
+          else
+            echo "PHP_CodeSniffer already installed (cached)"
+          fi
+
+          if [ ! -d ~/.composer/vendor/phpcompatibility/php-compatibility ]; then
+            echo "Installing PHPCompatibility..."
+            composer global require phpcompatibility/php-compatibility
+          else
+            echo "PHPCompatibility already installed (cached)"
+          fi
+
           # PHPCompatibilityをCodeSnifferに登録
           ~/.composer/vendor/bin/phpcs --config-set installed_paths ~/.composer/vendor/phpcompatibility/php-compatibility
 
