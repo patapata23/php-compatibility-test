@@ -5,7 +5,7 @@
 
 class Compatible
 {
-    // テストコメント2222
+    // テストコメント3333
     private $data = [];
 
     public function __construct(array $data = [])
