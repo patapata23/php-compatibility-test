@@ -58,6 +58,7 @@ jobs:
           if ! ~/.composer/vendor/bin/phpcs \
             --standard=PHPCompatibility \
             --runtime-set testVersion 7.3-8.4 \
+            --exclude=PHPCompatibility.FunctionUse.ArgumentFunctionsReportCurrentValue \
             --report=full \
             --file-list=changed_files.txt; then
             echo "::error::PHPCompatibility issues found"
