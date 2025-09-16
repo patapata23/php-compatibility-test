@@ -3,6 +3,7 @@
  * PHP 7.3-8.4 互換性のあるコード例
  */
 
+// コメント追加
 class Compatible
 {
     private $data = [];
