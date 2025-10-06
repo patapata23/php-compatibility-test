@@ -1,0 +1,158 @@
+name: Blade Syntax Check
+
+on:
+  pull_request:
+    branches: [ stable ]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**.blade.php'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  blade-syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'  # Laravel 4用
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Get changed Blade files
+        id: changed-files
+        run: |
+          changed_files=$(git diff --name-only origin/stable..HEAD | grep '\.blade\.php$' | while read file; do [ -f "$file" ] && echo "$file"; done || true)
+          if [ -z "$changed_files" ]; then
+            echo "has_files=false" >> $GITHUB_OUTPUT
+          else
+            echo "$changed_files" > changed_blade_files.txt
+            echo "has_files=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Blade syntax
+        if: steps.changed-files.outputs.has_files == 'true'
+        run: |
+          cat > check_blade.php << 'EOPHP'
+          <?php
+          require_once __DIR__ . '/vendor/autoload.php';
+          
+          $errors = [];
+          $warnings = [];
+          $files = file('changed_blade_files.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+          
+          foreach ($files as $file) {
+              if (!file_exists($file)) continue;
+              
+              echo "Checking: $file\n";
+              
+              $content = file_get_contents($file);
+              
+              // 基本的なtypoチェック
+              // 閉じタグの不一致
+              preg_match_all('/@(if|foreach|for|while|section|unless)\b/', $content, $opens);
+              preg_match_all('/@end(if|foreach|for|while|section|unless)\b/', $content, $closes);
+              
+              if (count($opens[0]) !== count($closes[0])) {
+                  $warnings[] = [
+                      'file' => $file,
+                      'warning' => 'Possible unclosed directive (開始と終了の数が一致しません)',
+                      'opens' => count($opens[0]),
+                      'closes' => count($closes[0])
+                  ];
+              }
+              
+              // Bladeコンパイルチェック
+              try {
+                  $compiler = new Illuminate\View\Compilers\BladeCompiler(
+                      new Illuminate\Filesystem\Filesystem(),
+                      sys_get_temp_dir()
+                  );
+                  
+                  $compiled = $compiler->compileString($content);
+                  
+                  // PHP構文チェック
+                  $tempFile = tempnam(sys_get_temp_dir(), 'blade_');
+                  file_put_contents($tempFile, $compiled);
+                  
+                  exec("php -l " . escapeshellarg($tempFile) . " 2>&1", $output, $returnCode);
+                  unlink($tempFile);
+                  
+                  if ($returnCode !== 0) {
+                      $errors[] = [
+                          'file' => $file,
+                          'error' => 'PHP syntax error',
+                          'details' => implode("\n", $output)
+                      ];
+                  }
+                  
+              } catch (Exception $e) {
+                  $errors[] = [
+                      'file' => $file,
+                      'error' => 'Blade compilation failed',
+                      'details' => $e->getMessage()
+                  ];
+              }
+          }
+          
+          // 結果出力
+          if (!empty($warnings)) {
+              echo "\n⚠️  Warnings:\n";
+              foreach ($warnings as $warning) {
+                  echo "File: {$warning['file']}\n";
+                  echo "Warning: {$warning['warning']}\n";
+                  if (isset($warning['opens'])) {
+                      echo "Opens: {$warning['opens']}, Closes: {$warning['closes']}\n";
+                  }
+                  echo "\n";
+              }
+          }
+          
+          if (!empty($errors)) {
+              echo "\n❌ Errors:\n";
+              foreach ($errors as $error) {
+                  echo "File: {$error['file']}\n";
+                  echo "Error: {$error['error']}\n";
+                  echo "Details: {$error['details']}\n\n";
+              }
+              exit(1);
+          }
+          
+          echo "\n✅ All Blade files passed syntax check\n";
+          EOPHP
+          
+          php check_blade.php
+
+      - name: Comment on PR
+        if: always() && steps.changed-files.outputs.has_files == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const success = '${{ job.status }}' === 'success';
+            const body = success 
+              ? '✅ **Blade Syntax Check Passed**\n\nAll changed Blade files are syntactically correct.'
+              : '⚠️ **Blade Syntax Errors Detected**\n\nPlease check the workflow logs for details.';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            })
