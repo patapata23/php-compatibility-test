@@ -101,7 +101,8 @@ jobs:
                   
                   // Laravel 4のcompileメソッドを使用
                   echo "→ Compiling Blade template...\n";
-                  $compiledPath = $bladeCompiler->compile($tempBladeFile);
+                  $bladeCompiler->compile($tempBladeFile);  // コンパイル実行
+                  $compiledPath = $bladeCompiler->getCompiledPath($tempBladeFile); 
                   echo "→ Compiled path: {$compiledPath}\n";
                   
                   // コンパイル済みファイルの確認
