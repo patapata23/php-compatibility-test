@@ -1,6 +1,5 @@
 
 <div class="form_box">
-<form method="post" action="/payment">
 <input type="hidden" name="ptype" value="reward" />
 <table class="list">
 <tr>
@@ -14,6 +13,8 @@
 <th width="100">出金額</th>
 <th> </th>
 </tr>
+</table>
+</div>
 
 {{-- @foreach ($plans as $idx => $plan)
 <tr>
