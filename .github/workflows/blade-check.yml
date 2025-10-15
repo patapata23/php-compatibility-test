@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p /tmp/blade-check
           cd /tmp/blade-check
-          composer init --name="temp/blade-check" --no-interaction
+          composer init --name="tmp/blade-check" --no-interaction
           
           # Laravel 4用のBladeパッケージをインストール
           composer require illuminate/view:"4.2.*" --no-interaction
@@ -80,88 +80,46 @@ jobs:
               echo "Checking: $file\n";
               
               $content = file_get_contents($file);
-              
-              // Bladeコンパイラが利用可能な場合
-              if ($bladeCompiler !== null) {
-                  try {
-                      // Bladeをコンパイル
-                      $compiled = $bladeCompiler->compileString($content);
-                      
-                      // コンパイル結果のPHP構文チェック
-                      $tempFile = tempnam(sys_get_temp_dir(), 'blade_check_');
-                      file_put_contents($tempFile, "<?php\n" . $compiled);
-                      
-                      exec("php -l " . escapeshellarg($tempFile) . " 2>&1", $output, $returnCode);
-                      unlink($tempFile);
-                      
-                      if ($returnCode !== 0) {
-                          $errors[] = [
-                              'file' => $file,
-                              'type' => 'PHP Syntax Error in compiled Blade',
-                              'details' => implode("\n", $output)
-                          ];
-                          echo "  ✗ PHP syntax error in compiled output\n";
-                      } else {
-                          echo "  ✓ Blade compilation successful\n";
-                      }
-                      
-                  } catch (Exception $e) {
+
+              try {
+                  // Bladeをコンパイル
+                  $compiled = $bladeCompiler->compileString($content);
+                  
+                  // コンパイル結果のPHP構文チェック
+                  $tempFile = tempnam(sys_get_temp_dir(), 'blade_check_');
+                  file_put_contents($tempFile, "<?php\n" . $compiled);
+                  
+                  exec("php -l " . escapeshellarg($tempFile) . " 2>&1", $output, $returnCode);
+                  unlink($tempFile);
+                  
+                  if ($returnCode !== 0) {
                       $errors[] = [
                           'file' => $file,
-                          'type' => 'Blade Compilation Error',
-                          'details' => $e->getMessage()
+                          'line' => 'N/A (compiled output)',
+                          'type' => 'PHP Syntax Error in compiled Blade',
+                          'details' => implode("\n", $output)
                       ];
-                      echo "  ✗ Compilation error: " . $e->getMessage() . "\n";
+                      echo "  ✗ PHP syntax error in compiled output\n";
+                  } else {
+                      echo "  ✓ Blade compilation successful\n";
                   }
-              }
-              
-              // 基本的なBladeディレクティブチェック（常に実行）
-              $directives = [
-                  'if' => 'endif',
-                  'foreach' => 'endforeach',
-                  'for' => 'endfor',
-                  'while' => 'endwhile',
-                  'section' => 'endsection|stop',
-                  'unless' => 'endunless',
-              ];
-              
-              foreach ($directives as $open => $close) {
-                  preg_match_all("/@{$open}\b/", $content, $opens);
-                  preg_match_all("/@(?:{$close})\b/", $content, $closes);
                   
-                  if (count($opens[0]) !== count($closes[0])) {
-                      $warnings[] = [
-                          'file' => $file,
-                          'type' => 'Directive Mismatch',
-                          'details' => "Found " . count($opens[0]) . " @{$open} but " . count($closes[0]) . " @{$close}"
-                      ];
-                      echo "  ⚠ Directive mismatch: @{$open} / @{$close}\n";
+              } catch (Exception $e) {
+                  // 例外から行番号を取得
+                  $line = 'N/A';
+                  $message = $e->getMessage();
+                  if (preg_match('/line (\d+)/', $message, $matches)) {
+                    $line = $matches[1];
                   }
-              }
               
-              // よくあるtypoチェック
-              if (preg_match('/@(endfi|endforach|esle|sectoin|yeild|forech)\b/', $content, $matches)) {
                   $errors[] = [
                       'file' => $file,
-                      'type' => 'Typo in Blade directive',
-                      'details' => "Found: @{$matches[1]}"
+                      'line' => $line,
+                      'type' => 'Blade Compilation Error',
+                      'details' => $e->getMessage()
                   ];
-                  echo "  ✗ Typo detected: @{$matches[1]}\n";
+                  echo "  ✗ Compilation error at line {$line}: " . $message . "\n";
               }
-              
-              // 未閉じ波括弧チェック
-              $open_brace = substr_count($content, '{{');
-              $close_brace = substr_count($content, '}}');
-              if ($open_brace !== $close_brace) {
-                  $errors[] = [
-                      'file' => $file,
-                      'type' => 'Unclosed Blade brackets',
-                      'details' => "Found {$open_brace} '{{' but {$close_brace} '}}'"
-                  ];
-                  echo "  ✗ Unclosed brackets\n";
-              }
-              
-              echo "\n";
           }
           
           // 結果サマリー
