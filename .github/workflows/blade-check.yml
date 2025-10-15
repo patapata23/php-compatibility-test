@@ -133,6 +133,7 @@ jobs:
               echo "\n⚠️  WARNINGS (" . count($warnings) . "):\n";
               foreach ($warnings as $warning) {
                   echo "\nFile: {$warning['file']}\n";
+                  echo "Line: {$error['line']}\n";
                   echo "Type: {$warning['type']}\n";
                   echo "Details: {$warning['details']}\n";
               }
@@ -142,6 +143,7 @@ jobs:
               echo "\n❌ ERRORS (" . count($errors) . "):\n";
               foreach ($errors as $error) {
                   echo "\nFile: {$error['file']}\n";
+                  echo "Line: {$error['line']}\n";
                   echo "Type: {$error['type']}\n";
                   echo "Details: {$error['details']}\n";
               }
