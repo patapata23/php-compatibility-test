@@ -20,4 +20,5 @@
 <tr>
 <td class="txt_center"><input type="checkbox" name="ldgid[]" value="{{{$plan->ldgid}}}" class="ldgid" data-total="{{{$plan->total}}}" /></td>
 <td>{{{$plan->service }}}</td>
+ <td class="bside">{{{ $result->cost ?? ''}}}@if($result->cost_etc != "")({{{ isset($result->cost_etc) ? number_format($result->cost_etc ?? 0) ? '' }}}円)@endif</td>
 @endforeach
