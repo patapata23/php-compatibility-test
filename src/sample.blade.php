@@ -1,6 +1,5 @@
 
 <div class="form_box">
-<input type="hidden" name="ptype" value="reward" />
 <table class="list">
 <tr>
 <th width="20" class="txt_center"><input type="checkbox" id="checkAll" /></th>
