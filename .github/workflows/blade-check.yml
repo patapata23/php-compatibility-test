@@ -24,7 +24,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '7.0'  # Laravel 4.2互換バージョンに変更
+          php-version: '7.0'
 
       - name: Create temporary composer project
         run: |
@@ -61,7 +61,7 @@ jobs:
           $errors = [];
           $warnings = [];
           
-          // Bladeコンパイラを直接インスタンス化
+          // Bladeコンパイラを初期化
           try {
               $filesystem = new \Illuminate\Filesystem\Filesystem();
               $cachePath = sys_get_temp_dir() . '/blade_cache';
@@ -69,7 +69,9 @@ jobs:
                   mkdir($cachePath, 0755, true);
               }
               $bladeCompiler = new \Illuminate\View\Compilers\BladeCompiler($filesystem, $cachePath);
-              echo "✓ Blade compiler initialized (Laravel 4.2)\n\n";
+              echo "✓ Blade compiler initialized (Laravel 4.2)\n";
+              echo "  Cache path: {$cachePath}\n";
+              echo "  PHP version: " . PHP_VERSION . "\n\n";
           } catch (Exception $e) {
               echo "✗ Could not initialize Blade compiler: " . $e->getMessage() . "\n";
               exit(1);
@@ -78,56 +80,84 @@ jobs:
           $files = file('changed_blade_files.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
           
           foreach ($files as $file) {
-              if (!file_exists($file)) continue;
+              if (!file_exists($file)) {
+                  echo "Skipping (file not found): $file\n\n";
+                  continue;
+              }
               
+              echo str_repeat("-", 60) . "\n";
               echo "Checking: $file\n";
+              echo str_repeat("-", 60) . "\n";
               
               $content = file_get_contents($file);
+              echo "File size: " . strlen($content) . " bytes\n";
+              echo "First 200 chars:\n" . substr($content, 0, 200) . "\n...\n\n";
 
               try {
                   // 一時ファイルを作成してBladeをコンパイル
                   $tempBladeFile = tempnam(sys_get_temp_dir(), 'blade_source_') . '.blade.php';
                   file_put_contents($tempBladeFile, $content);
+                  echo "→ Created temp Blade file: {$tempBladeFile}\n";
                   
                   // Laravel 4のcompileメソッドを使用
-                  $compiled = $bladeCompiler->compile($tempBladeFile);
+                  echo "→ Compiling Blade template...\n";
+                  $compiledPath = $bladeCompiler->compile($tempBladeFile);
+                  echo "→ Compiled path: {$compiledPath}\n";
                   
-                  // コンパイル済みファイルを読み込んでPHP構文チェック
-                  if (file_exists($compiled)) {
-                      $compiledContent = file_get_contents($compiled);
-                      
-                      $tempPhpFile = tempnam(sys_get_temp_dir(), 'blade_check_') . '.php';
-                      file_put_contents($tempPhpFile, $compiledContent);
-                      
-                      exec("php -l " . escapeshellarg($tempPhpFile) . " 2>&1", $output, $returnCode);
-                      unlink($tempPhpFile);
-                      
-                      if ($returnCode !== 0) {
-                          $errors[] = [
-                              'file' => $file,
-                              'line' => 'N/A (compiled output)',
-                              'type' => 'PHP Syntax Error in compiled Blade',
-                              'details' => implode("\n", $output)
-                          ];
-                          echo "  ✗ PHP syntax error in compiled output\n";
-                      } else {
-                          echo "  ✓ Blade compilation successful\n";
-                      }
-                  } else {
+                  // コンパイル済みファイルの確認
+                  if (!file_exists($compiledPath)) {
                       $warnings[] = [
                           'file' => $file,
                           'line' => 'N/A',
                           'type' => 'Warning',
-                          'details' => 'Compiled file not found, but no exception thrown'
+                          'details' => "Compiled file not found at: {$compiledPath}"
                       ];
+                      echo "⚠ WARNING: Compiled file does not exist!\n\n";
+                      if (file_exists($tempBladeFile)) unlink($tempBladeFile);
+                      continue;
+                  }
+                  
+                  $compiledContent = file_get_contents($compiledPath);
+                  echo "→ Compiled file size: " . strlen($compiledContent) . " bytes\n";
+                  echo "→ Compiled content preview (first 500 chars):\n";
+                  echo str_repeat(".", 60) . "\n";
+                  echo substr($compiledContent, 0, 500) . "\n";
+                  echo str_repeat(".", 60) . "\n\n";
+                  
+                  // コンパイル結果のPHP構文チェック
+                  echo "→ Running PHP lint check...\n";
+                  $tempPhpFile = tempnam(sys_get_temp_dir(), 'blade_php_check_') . '.php';
+                  file_put_contents($tempPhpFile, $compiledContent);
+                  
+                  $lintCommand = "php -l " . escapeshellarg($tempPhpFile) . " 2>&1";
+                  echo "→ Command: {$lintCommand}\n";
+                  exec($lintCommand, $output, $returnCode);
+                  
+                  echo "→ PHP lint exit code: {$returnCode}\n";
+                  echo "→ PHP lint output:\n";
+                  foreach ($output as $line) {
+                      echo "   " . $line . "\n";
+                  }
+                  echo "\n";
+                  
+                  if ($returnCode !== 0) {
+                      $errors[] = [
+                          'file' => $file,
+                          'line' => 'N/A (compiled output)',
+                          'type' => 'PHP Syntax Error in compiled Blade',
+                          'details' => implode("\n", $output)
+                      ];
+                      echo "✗ FAILED: PHP syntax error detected in compiled output\n\n";
+                  } else {
+                      echo "✓ PASSED: Blade compilation successful, PHP syntax valid\n\n";
                   }
                   
                   // クリーンアップ
+                  unlink($tempPhpFile);
                   if (file_exists($tempBladeFile)) unlink($tempBladeFile);
-                  if (file_exists($compiled)) unlink($compiled);
+                  if (file_exists($compiledPath)) unlink($compiledPath);
                   
               } catch (Exception $e) {
-                  // 例外から行番号を取得
                   $line = 'N/A';
                   $message = $e->getMessage();
                   if (preg_match('/line (\d+)/', $message, $matches)) {
@@ -137,10 +167,14 @@ jobs:
                   $errors[] = [
                       'file' => $file,
                       'line' => $line,
-                      'type' => 'Blade Compilation Error',
-                      'details' => $message
+                      'type' => 'Blade Compilation Exception',
+                      'details' => get_class($e) . ': ' . $message
                   ];
-                  echo "  ✗ Compilation error: " . $message . "\n";
+                  echo "✗ EXCEPTION during compilation:\n";
+                  echo "   Class: " . get_class($e) . "\n";
+                  echo "   Message: " . $message . "\n";
+                  echo "   File: " . $e->getFile() . "\n";
+                  echo "   Line: " . $e->getLine() . "\n\n";
               }
           }
           
@@ -174,12 +208,14 @@ jobs:
           
           if ($has_issues) {
               echo "\n" . str_repeat("=", 60) . "\n";
-              echo "❌ CHECK FAILED\n";
+              echo "❌ CHECK FAILED - " . count($errors) . " error(s) found\n";
+              echo str_repeat("=", 60) . "\n";
               exit(1);
           }
           
           echo "\n" . str_repeat("=", 60) . "\n";
-          echo "✅ ALL CHECKS PASSED\n";
+          echo "✅ ALL CHECKS PASSED - " . count($files) . " file(s) checked\n";
+          echo str_repeat("=", 60) . "\n";
           exit(0);
           EOPHP
           
