@@ -24,7 +24,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '7.4'
+          php-version: '7.0'  # Laravel 4.2互換バージョンに変更
 
       - name: Create temporary composer project
         run: |
@@ -64,12 +64,15 @@ jobs:
           // Bladeコンパイラを直接インスタンス化
           try {
               $filesystem = new \Illuminate\Filesystem\Filesystem();
-              $bladeCompiler = new \Illuminate\View\Compilers\BladeCompiler($filesystem, sys_get_temp_dir());
+              $cachePath = sys_get_temp_dir() . '/blade_cache';
+              if (!is_dir($cachePath)) {
+                  mkdir($cachePath, 0755, true);
+              }
+              $bladeCompiler = new \Illuminate\View\Compilers\BladeCompiler($filesystem, $cachePath);
               echo "✓ Blade compiler initialized (Laravel 4.2)\n\n";
           } catch (Exception $e) {
               echo "✗ Could not initialize Blade compiler: " . $e->getMessage() . "\n";
-              echo "Proceeding with basic checks only\n\n";
-              $bladeCompiler = null;
+              exit(1);
           }
           
           $files = file('changed_blade_files.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -82,27 +85,46 @@ jobs:
               $content = file_get_contents($file);
 
               try {
-                  // Bladeをコンパイル
-                  $compiled = $bladeCompiler->compileString($content);
+                  // 一時ファイルを作成してBladeをコンパイル
+                  $tempBladeFile = tempnam(sys_get_temp_dir(), 'blade_source_') . '.blade.php';
+                  file_put_contents($tempBladeFile, $content);
                   
-                  // コンパイル結果のPHP構文チェック
-                  $tempFile = tempnam(sys_get_temp_dir(), 'blade_check_');
-                  file_put_contents($tempFile, "<?php\n" . $compiled);
+                  // Laravel 4のcompileメソッドを使用
+                  $compiled = $bladeCompiler->compile($tempBladeFile);
                   
-                  exec("php -l " . escapeshellarg($tempFile) . " 2>&1", $output, $returnCode);
-                  unlink($tempFile);
-                  
-                  if ($returnCode !== 0) {
-                      $errors[] = [
-                          'file' => $file,
-                          'line' => 'N/A (compiled output)',
-                          'type' => 'PHP Syntax Error in compiled Blade',
-                          'details' => implode("\n", $output)
-                      ];
-                      echo "  ✗ PHP syntax error in compiled output\n";
+                  // コンパイル済みファイルを読み込んでPHP構文チェック
+                  if (file_exists($compiled)) {
+                      $compiledContent = file_get_contents($compiled);
+                      
+                      $tempPhpFile = tempnam(sys_get_temp_dir(), 'blade_check_') . '.php';
+                      file_put_contents($tempPhpFile, $compiledContent);
+                      
+                      exec("php -l " . escapeshellarg($tempPhpFile) . " 2>&1", $output, $returnCode);
+                      unlink($tempPhpFile);
+                      
+                      if ($returnCode !== 0) {
+                          $errors[] = [
+                              'file' => $file,
+                              'line' => 'N/A (compiled output)',
+                              'type' => 'PHP Syntax Error in compiled Blade',
+                              'details' => implode("\n", $output)
+                          ];
+                          echo "  ✗ PHP syntax error in compiled output\n";
+                      } else {
+                          echo "  ✓ Blade compilation successful\n";
+                      }
                   } else {
-                      echo "  ✓ Blade compilation successful\n";
+                      $warnings[] = [
+                          'file' => $file,
+                          'line' => 'N/A',
+                          'type' => 'Warning',
+                          'details' => 'Compiled file not found, but no exception thrown'
+                      ];
                   }
+                  
+                  // クリーンアップ
+                  if (file_exists($tempBladeFile)) unlink($tempBladeFile);
+                  if (file_exists($compiled)) unlink($compiled);
                   
               } catch (Exception $e) {
                   // 例外から行番号を取得
@@ -116,9 +138,9 @@ jobs:
                       'file' => $file,
                       'line' => $line,
                       'type' => 'Blade Compilation Error',
-                      'details' => $e->getMessage()
+                      'details' => $message
                   ];
-                  echo "  ✗ Compilation error at line {$line}: " . $message . "\n";
+                  echo "  ✗ Compilation error: " . $message . "\n";
               }
           }
           
@@ -133,7 +155,7 @@ jobs:
               echo "\n⚠️  WARNINGS (" . count($warnings) . "):\n";
               foreach ($warnings as $warning) {
                   echo "\nFile: {$warning['file']}\n";
-                  echo "Line: {$error['line']}\n";
+                  echo "Line: {$warning['line']}\n";
                   echo "Type: {$warning['type']}\n";
                   echo "Details: {$warning['details']}\n";
               }
