@@ -118,7 +118,7 @@ jobs:
                   // コンパイル結果のPHP構文チェック
                   echo "→ Running PHP lint check...\n";
                   $tempPhpFile = tempnam(sys_get_temp_dir(), 'blade_php_check_') . '.php';
-                  file_put_contents($tempPhpFile, $compiledContent);
+                  file_put_contents($tempPhpFile, file_get_contents($compiledPath));
                   
                   $lintCommand = "php -l " . escapeshellarg($tempPhpFile) . " 2>&1";
                   echo "→ Command: {$lintCommand}\n";
