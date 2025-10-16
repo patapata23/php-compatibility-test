@@ -1,0 +1,249 @@
+name: Blade Syntax Check
+
+on:
+  pull_request:
+    branches: [ stable ]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**.blade.php'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  blade-syntax-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.3'
+
+      - name: Create temporary composer project
+        run: |
+          mkdir -p /tmp/blade-check
+          cd /tmp/blade-check
+          composer init --name="tmp/blade-check" --no-interaction
+          
+          # Laravel 4用のBladeパッケージをインストール
+          composer require illuminate/view:"4.2.*" --no-interaction
+          composer require illuminate/filesystem:"4.2.*" --no-interaction
+
+      - name: Get changed Blade files
+        id: changed-files
+        run: |
+          changed_blade_files=$(git diff --name-only origin/stable..HEAD | grep '\.blade\.php$' | while read file; do [ -f "$file" ] && echo "$file"; done || true)
+          
+          if [ -z "$changed_blade_files" ]; then
+            echo "No Blade files changed in this PR"
+            echo "has_blade_files=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changed Blade files:"
+            echo "$changed_blade_files"
+            echo "$changed_blade_files" > changed_blade_files.txt
+            echo "has_blade_files=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Blade syntax
+        if: steps.changed-files.outputs.has_blade_files == 'true'
+        run: |
+          cat > check_blade.php << 'EOPHP'
+          <?php
+          require '/tmp/blade-check/vendor/autoload.php';
+          
+          $errors = [];
+          $warnings = [];
+          
+          // Bladeコンパイラを初期化
+          try {
+              $filesystem = new \Illuminate\Filesystem\Filesystem();
+              $cachePath = sys_get_temp_dir() . '/blade_cache';
+              if (!is_dir($cachePath)) {
+                  mkdir($cachePath, 0755, true);
+              }
+              $bladeCompiler = new \Illuminate\View\Compilers\BladeCompiler($filesystem, $cachePath);
+              echo "✓ Blade compiler initialized (Laravel 4.2)\n";
+              echo "  Cache path: {$cachePath}\n";
+              echo "  PHP version: " . PHP_VERSION . "\n\n";
+          } catch (Exception $e) {
+              echo "✗ Could not initialize Blade compiler: " . $e->getMessage() . "\n";
+              exit(1);
+          }
+          
+          $files = file('changed_blade_files.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+          
+          foreach ($files as $file) {
+              if (!file_exists($file)) {
+                  echo "Skipping (file not found): $file\n\n";
+                  continue;
+              }
+              
+              echo str_repeat("-", 60) . "\n";
+              echo "Checking: $file\n";
+              echo str_repeat("-", 60) . "\n";
+              
+              $content = file_get_contents($file);
+              try {
+                  // 一時ファイルを作成してBladeをコンパイル
+                  $tempBladeFile = tempnam(sys_get_temp_dir(), 'blade_source_') . '.blade.php';
+                  file_put_contents($tempBladeFile, $content);
+                  echo "→ Created temp Blade file: {$tempBladeFile}\n";
+                  
+                  // Laravel 4のcompileメソッドを使用
+                  echo "→ Compiling Blade template...\n";
+                  $bladeCompiler->compile($tempBladeFile);  // コンパイル実行
+                  $compiledPath = $bladeCompiler->getCompiledPath($tempBladeFile); 
+                  echo "→ Compiled path: {$compiledPath}\n";
+                  
+                  // コンパイル済みファイルの確認
+                  if (!file_exists($compiledPath)) {
+                      $warnings[] = [
+                          'file' => $file,
+                          'line' => 'N/A',
+                          'type' => 'Warning',
+                          'details' => "Compiled file not found at: {$compiledPath}"
+                      ];
+                      echo "⚠ WARNING: Compiled file does not exist!\n\n";
+                      if (file_exists($tempBladeFile)) unlink($tempBladeFile);
+                      continue;
+                  }
+                  
+                  // コンパイル結果のPHP構文チェック
+                  echo "→ Running PHP lint check...\n";
+                  $tempPhpFile = tempnam(sys_get_temp_dir(), 'blade_php_check_') . '.php';
+                  file_put_contents($tempPhpFile, file_get_contents($compiledPath));
+                  
+                  $lintCommand = "php -l " . escapeshellarg($tempPhpFile) . " 2>&1";
+                  echo "→ Command: {$lintCommand}\n";
+                  exec($lintCommand, $output, $returnCode);
+                  
+                  echo "→ PHP lint exit code: {$returnCode}\n";
+                  echo "→ PHP lint output:\n";
+                  foreach ($output as $line) {
+                      echo "   " . $line . "\n";
+                  }
+                  echo "\n";
+                  
+                  if ($returnCode !== 0) {
+                      $errors[] = [
+                          'file' => $file,
+                          'line' => 'N/A (compiled output)',
+                          'type' => 'PHP Syntax Error in compiled Blade',
+                          'details' => implode("\n", $output)
+                      ];
+                      echo "✗ FAILED: PHP syntax error detected in compiled output\n\n";
+                  } else {
+                      echo "✓ PASSED: Blade compilation successful, PHP syntax valid\n\n";
+                  }
+                  
+                  // クリーンアップ
+                  unlink($tempPhpFile);
+                  if (file_exists($tempBladeFile)) unlink($tempBladeFile);
+                  if (file_exists($compiledPath)) unlink($compiledPath);
+                  
+              } catch (Exception $e) {
+                  $line = 'N/A';
+                  $message = $e->getMessage();
+                  if (preg_match('/line (\d+)/', $message, $matches)) {
+                    $line = $matches[1];
+                  }
+              
+                  $errors[] = [
+                      'file' => $file,
+                      'line' => $line,
+                      'type' => 'Blade Compilation Exception',
+                      'details' => get_class($e) . ': ' . $message
+                  ];
+                  echo "✗ EXCEPTION during compilation:\n";
+                  echo "   Class: " . get_class($e) . "\n";
+                  echo "   Message: " . $message . "\n";
+                  echo "   File: " . $e->getFile() . "\n";
+                  echo "   Line: " . $e->getLine() . "\n\n";
+              }
+          }
+          
+          // 結果サマリー
+          echo str_repeat("=", 60) . "\n";
+          echo "SUMMARY\n";
+          echo str_repeat("=", 60) . "\n";
+          
+          $has_issues = false;
+          
+          if (!empty($warnings)) {
+              echo "\n⚠️  WARNINGS (" . count($warnings) . "):\n";
+              foreach ($warnings as $warning) {
+                  echo "\nFile: {$warning['file']}\n";
+                  echo "Line: {$warning['line']}\n";
+                  echo "Type: {$warning['type']}\n";
+                  echo "Details: {$warning['details']}\n";
+              }
+          }
+          
+          if (!empty($errors)) {
+              echo "\n❌ ERRORS (" . count($errors) . "):\n";
+              foreach ($errors as $error) {
+                  echo "\nFile: {$error['file']}\n";
+                  echo "Line: {$error['line']}\n";
+                  echo "Type: {$error['type']}\n";
+                  echo "Details: {$error['details']}\n";
+              }
+              $has_issues = true;
+          }
+          
+          if ($has_issues) {
+              echo "\n" . str_repeat("=", 60) . "\n";
+              echo "❌ CHECK FAILED - " . count($errors) . " error(s) found\n";
+              echo str_repeat("=", 60) . "\n";
+              exit(1);
+          }
+          
+          echo "\n" . str_repeat("=", 60) . "\n";
+          echo "✅ ALL CHECKS PASSED - " . count($files) . " file(s) checked\n";
+          echo str_repeat("=", 60) . "\n";
+          exit(0);
+          EOPHP
+          
+          php check_blade.php
+
+      - name: Comment PR on Blade syntax issues
+        if: failure() && steps.changed-files.outputs.has_blade_files == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ **Blade Syntax Errors Detected**\n\nThe changed Blade files in this PR have syntax errors or compilation issues.\n\nPlease check the GitHub Actions workflow logs for detailed information.'
+            })
+
+      - name: Comment PR on success
+        if: success() && steps.changed-files.outputs.has_blade_files == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Blade Syntax Check Passed**\n\nAll changed Blade files are syntactically correct. No issues detected.'
+            })
+
+      - name: Comment PR when no Blade files changed
+        if: success() && steps.changed-files.outputs.has_blade_files == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'ℹ️ **Blade Syntax Check Skipped**\n\nNo Blade files were changed in this PR.'
+            })
