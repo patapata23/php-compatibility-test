@@ -33,8 +33,8 @@ jobs:
           composer init --name="tmp/blade-check" --no-interaction
           
           # Laravel 4用のBladeパッケージをインストール
-          composer require illuminate/view:"4.2.22" --no-interaction
-          composer require illuminate/filesystem:"4.2.22" --no-interaction
+          composer require illuminate/view:"4.2.*" --no-interaction
+          composer require illuminate/filesystem:"4.2.*" --no-interaction
 
       - name: Get changed Blade files
         id: changed-files
