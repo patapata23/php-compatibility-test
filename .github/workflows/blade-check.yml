@@ -90,9 +90,6 @@ jobs:
               echo str_repeat("-", 60) . "\n";
               
               $content = file_get_contents($file);
-              echo "File size: " . strlen($content) . " bytes\n";
-              echo "First 200 chars:\n" . substr($content, 0, 200) . "\n...\n\n";
-
               try {
                   // 一時ファイルを作成してBladeをコンパイル
                   $tempBladeFile = tempnam(sys_get_temp_dir(), 'blade_source_') . '.blade.php';
@@ -117,13 +114,6 @@ jobs:
                       if (file_exists($tempBladeFile)) unlink($tempBladeFile);
                       continue;
                   }
-                  
-                  $compiledContent = file_get_contents($compiledPath);
-                  echo "→ Compiled file size: " . strlen($compiledContent) . " bytes\n";
-                  echo "→ Compiled content preview (first 500 chars):\n";
-                  echo str_repeat(".", 60) . "\n";
-                  echo substr($compiledContent, 0, 500) . "\n";
-                  echo str_repeat(".", 60) . "\n\n";
                   
                   // コンパイル結果のPHP構文チェック
                   echo "→ Running PHP lint check...\n";
